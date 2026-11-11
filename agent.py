@@ -1,7 +1,11 @@
 """Bài tập chính: ReAct agent loop. Xem GUIDE.md."""
 import json
+import re
 
 from status_tools import SCHEMAS
+
+# Link tới incident khác nằm trong nội dung update, ví dụ https://www.githubstatus.com/incidents/abc123
+INCIDENT_LINK = re.compile(r'https?://[^\s)\]>"\']*/incidents/([A-Za-z0-9]+)')
 
 SYSTEM_PROMPT = '''Bạn là trợ lý điều tra trạng thái GitHub và Cloudflare.
 Dùng tools trước khi khẳng định về trạng thái. Phân biệt incident hiện tại và lịch sử,
@@ -40,6 +44,9 @@ def run_agent(question, provider, tools, max_steps=6):
                 {'role': 'user', 'content': question}]
     trace, usage = [], []
     observed_urls = []  # URL incident lấy được từ tool call thành công
+    fetched = set()     # (provider, incident_id) đã đọc bằng get_incident_details
+    referenced = {}     # (provider, incident_id) được nhắc tới trong update nhưng chưa đọc
+    asked = set()       # incident đã nhắc model đọc, chỉ nhắc một lần
     answer = ''
 
     def finish(status, error=None):
@@ -78,6 +85,14 @@ def run_agent(question, provider, tools, max_steps=6):
                 if (call['name'] == 'get_incident_details' and isinstance(result, dict)
                         and result.get('ok') and result.get('url')):
                     observed_urls.append(result['url'])
+                    key = (result.get('provider'), result.get('id'))
+                    fetched.add(key)
+                    referenced.pop(key, None)
+                    for update in result.get('updates', []):
+                        for ref_id in INCIDENT_LINK.findall(update.get('body', '')):
+                            ref = (result.get('provider'), ref_id)
+                            if ref not in fetched:
+                                referenced[ref] = True
                 messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': _dump(result)})
             continue
 
@@ -85,6 +100,19 @@ def run_agent(question, provider, tools, max_steps=6):
             msg = f'Model dừng với lý do không hỗ trợ: {reason}'
             trace.append({'event': 'error', 'step': step, 'error': msg})
             return finish('error', msg)
+
+        # Incident được nhắc tới trong update mà chưa đọc: nhắc model đọc trước khi kết luận.
+        unread = [r for r in referenced if r not in fetched and r not in asked]
+        if unread and step < max_steps:
+            asked.update(unread)
+            trace.append({'event': 'validation_unfollowed_reference', 'step': step,
+                          'incidents': [{'provider': p, 'incident_id': i} for p, i in unread]})
+            messages.append({'role': 'user', 'content':
+                             'Kết quả tool nhắc tới incident liên quan mà bạn chưa đọc: ' +
+                             ', '.join(f'{p}/{i}' for p, i in unread) +
+                             '. Hãy gọi get_incident_details cho các incident này rồi mới kết luận; '
+                             'nếu không thể đọc, nêu rõ giới hạn dữ liệu.'})
+            continue
 
         # Final answer: phải chứa ít nhất một URL incident đã quan sát (nếu có).
         if observed_urls and not any(u in answer for u in observed_urls):
