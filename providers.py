@@ -3,6 +3,33 @@ import json
 import os
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+
+def load_dotenv(path=None):
+    """Nạp KEY=value từ .env (chấp nhận dòng 'export KEY=value') vào os.environ.
+    Biến đã có sẵn trong môi trường được giữ nguyên, không bị .env ghi đè."""
+    env_file = Path(path) if path else Path(__file__).resolve().parent / '.env'
+    try:
+        lines = env_file.read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        key, sep, value = line.partition('=')
+        key, value = key.strip(), value.strip()
+        if not sep or not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+load_dotenv()
 
 CONFIG = {
     'openai': ('OPENAI_API_KEY', 'https://api.openai.com/v1/chat/completions'),

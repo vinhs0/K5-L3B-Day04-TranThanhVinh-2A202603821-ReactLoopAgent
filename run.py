@@ -20,7 +20,7 @@ def main():
     p.add_argument('--bonus', action='store_true', help='Dùng bộ tools bonus')
     p.add_argument('--mode', choices=['snapshot', 'live'], default='snapshot')
     p.add_argument('--provider', choices=['openai', 'gemini', 'anthropic', 'openrouter'], default=os.getenv('PROVIDER', 'openai'))
-    p.add_argument('--model', default=os.getenv('MODEL'))
+    p.add_argument('--model', default=os.getenv('MODEL','gpt-4o-mini'))
     p.add_argument('--max-steps', type=int, default=6)
     args = p.parse_args()
     if args.max_steps < 1:
